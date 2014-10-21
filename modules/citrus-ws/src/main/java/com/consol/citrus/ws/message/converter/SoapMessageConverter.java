@@ -17,12 +17,26 @@
 package com.consol.citrus.ws.message.converter;
 
 import com.consol.citrus.exceptions.CitrusRuntimeException;
-import com.consol.citrus.message.*;
+import com.consol.citrus.message.Message;
+import com.consol.citrus.message.MessageHeaderUtils;
+import com.consol.citrus.message.MessageHeaders;
 import com.consol.citrus.ws.SoapAttachment;
 import com.consol.citrus.ws.client.WebServiceEndpointConfiguration;
 import com.consol.citrus.ws.message.SoapMessage;
 import com.consol.citrus.ws.message.SoapMessageHeaders;
 import com.consol.citrus.ws.message.callback.SoapResponseMessageCallback;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URISyntaxException;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Map.Entry;
+import javax.xml.soap.MimeHeader;
+import javax.xml.soap.MimeHeaders;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.TransformerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.InputStreamSource;
@@ -42,15 +56,6 @@ import org.springframework.ws.transport.http.HttpServletConnection;
 import org.springframework.xml.namespace.QNameUtils;
 import org.springframework.xml.transform.StringResult;
 import org.springframework.xml.transform.StringSource;
-
-import javax.xml.soap.MimeHeader;
-import javax.xml.soap.MimeHeaders;
-import javax.xml.transform.*;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URISyntaxException;
-import java.util.*;
-import java.util.Map.Entry;
 
 /**
  * Default converter implementation for SOAP messages. By default strips away the SOAP envelope and constructs internal message representation
@@ -133,13 +138,21 @@ public class SoapMessageConverter implements WebServiceMessageConverter {
         for (final Attachment attachment : soapMessage.getAttachments()) {
             if (log.isDebugEnabled()) {
                 log.debug(String.format("Adding attachment to SOAP message: '%s' ('%s')", attachment.getContentId(), attachment.getContentType()));
-            }
+			}
 
-            soapRequest.addAttachment(attachment.getContentId(), new InputStreamSource() {
-                public InputStream getInputStream() throws IOException {
-                    return attachment.getInputStream();
-                }
-            }, attachment.getContentType());
+			if (soapMessage.getMtomEnabled()) {
+				if (soapRequest instanceof SaajSoapMessage) {
+					log.debug("Converting SaajSoapMessage to XOP package");
+					((SaajSoapMessage) soapRequest).convertToXopPackage();
+				} else if (soapRequest instanceof AxiomSoapMessage) {
+					log.warn("AxiomSoapMessage cannot be converted to XOP package");
+				}
+			}
+			soapRequest.addAttachment(attachment.getContentId(), new InputStreamSource() {
+				public InputStream getInputStream() throws IOException {
+					return attachment.getInputStream();
+				}
+			}, attachment.getContentType());
         }
     }
 

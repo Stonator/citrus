@@ -16,6 +16,7 @@
 
 package com.consol.citrus.ws.config.xml;
 
+import com.consol.citrus.config.util.BeanDefinitionParserUtils;
 import com.consol.citrus.config.xml.SendMessageActionParser;
 import com.consol.citrus.ws.actions.SendSoapMessageAction;
 import org.springframework.beans.factory.support.BeanDefinitionBuilder;
@@ -33,7 +34,9 @@ public class SendSoapMessageActionParser extends SendMessageActionParser {
     public BeanDefinitionBuilder parseComponent(Element element, ParserContext parserContext) {
         BeanDefinitionBuilder builder = super.parseComponent(element, parserContext);
         
-        SoapAttachmentParser.parseAttachment(builder, element);
+		SoapAttachmentParser.parseAttachment(builder, element);
+
+		BeanDefinitionParserUtils.setPropertyValue(builder, element.getAttribute("mtom-enabled"), "mtomEnabled");
         
         return builder;
     }

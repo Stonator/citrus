@@ -19,8 +19,10 @@ package com.consol.citrus.ws.message;
 import com.consol.citrus.message.DefaultMessage;
 import com.consol.citrus.message.Message;
 import com.consol.citrus.ws.SoapAttachment;
-
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * SOAP message representation holding additional elements like SOAP action, header fragment data and
@@ -35,7 +37,9 @@ public class SoapMessage extends DefaultMessage {
     private static final long serialVersionUID = 3289201140229458069L;
 
     /** Optional list of SOAP attachments */
-    private List<SoapAttachment> attachments = new ArrayList<SoapAttachment>();
+	private List<SoapAttachment> attachments = new ArrayList<SoapAttachment>();
+
+	private boolean mtomEnabled = false;
 
     /**
      * Constructs copy of given message.
@@ -111,5 +115,18 @@ public class SoapMessage extends DefaultMessage {
      */
     public List<SoapAttachment> getAttachments() {
         return attachments;
-    }
+	}
+
+	/**
+	 * Enable or disable mtom attachments
+	 *
+	 * @param mtomEnabled
+	 */
+	public void setMtomEnabled(Boolean enable) {
+		this.mtomEnabled = enable;
+	}
+
+	public Boolean getMtomEnabled() {
+		return this.mtomEnabled;
+	}
 }

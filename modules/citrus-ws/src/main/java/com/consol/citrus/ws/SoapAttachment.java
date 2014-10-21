@@ -18,15 +18,21 @@ package com.consol.citrus.ws;
 
 import com.consol.citrus.exceptions.CitrusRuntimeException;
 import com.consol.citrus.util.FileUtils;
-import org.springframework.ws.mime.Attachment;
-
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.Serializable;
+import java.io.UnsupportedEncodingException;
 import javax.activation.DataHandler;
 import javax.activation.DataSource;
-import java.io.*;
+import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.io.IOUtils;
+import org.springframework.ws.mime.Attachment;
 
 /**
  * Citrus SOAP attachment implementation.
- * 
+ *
  * @author Christoph Deppisch
  */
 public class SoapAttachment implements Attachment, Serializable {
@@ -35,17 +41,27 @@ public class SoapAttachment implements Attachment, Serializable {
     private static final long serialVersionUID = 6277464458242523954L;
 
     /** Content body as string */
-    private String content;
-    
+	private String content;
+
+	/**
+	 * Content body as binary
+	 */
+	private DataHandler binaryContent = null;
+
     /** Content type */
     private String contentType = "text/plain";
-    
+
     /** Content identifier */
     private String contentId = null;
-    
+
     /** Chosen charset of content body */
-    private String charsetName = "UTF-8";
-    
+	private String charsetName = "UTF-8";
+
+	/**
+	 * send mtom attachments inline as hex or base64 coded
+	 */
+	private Boolean mtomInline = false;
+
     /**
      * Default constructor
      */
@@ -62,18 +78,24 @@ public class SoapAttachment implements Attachment, Serializable {
         soapAttachment.setContentId(attachment.getContentId());
         soapAttachment.setContentType(attachment.getContentType());
 
-        try {
-            soapAttachment.setContent(FileUtils.readToString(attachment.getInputStream()).trim());
-        } catch (IOException e) {
+		if (attachment.getContentType().startsWith("text/")) {
+			// text content
+			try {
+				soapAttachment.setContent(FileUtils.readToString(attachment.getInputStream()).trim());
+			} catch (IOException e) {
             throw new CitrusRuntimeException("Failed to read SOAP attachment content", e);
-        }
+			}
+		} else {
+			// binary content
+			soapAttachment.setContent(attachment.getDataHandler());
+		}
 
         //TODO set charset name from attachment
         soapAttachment.setCharsetName("UTF-8");
 
         return soapAttachment;
     }
-    
+
     /**
      * Constructor using fields.
      * @param content
@@ -81,7 +103,7 @@ public class SoapAttachment implements Attachment, Serializable {
     public SoapAttachment(String content) {
         this.content = content;
     }
-    
+
     /**
      * @see org.springframework.ws.mime.Attachment#getContentId()
      */
@@ -99,55 +121,75 @@ public class SoapAttachment implements Attachment, Serializable {
     /**
      * @see org.springframework.ws.mime.Attachment#getDataHandler()
      */
-    public DataHandler getDataHandler() {
-        return new DataHandler(new DataSource() {
-            public OutputStream getOutputStream() throws IOException {
-                throw new UnsupportedOperationException();
-            }
-            
-            public String getName() {
-                return contentId;
-            }
-            
-            public InputStream getInputStream() throws IOException {
-                return new ByteArrayInputStream(content.getBytes(charsetName));
-            }
-            
-            public String getContentType() {
-                return contentType;
-            }
-        });
+	public DataHandler getDataHandler() {
+		if (binaryContent != null) {
+			return binaryContent;
+		} else {
+			return new DataHandler(new DataSource() {
+				public OutputStream getOutputStream() throws IOException {
+					throw new UnsupportedOperationException();
+				}
+
+				public String getName() {
+					return contentId;
+				}
+
+				public InputStream getInputStream() throws IOException {
+					return new ByteArrayInputStream(content.getBytes(charsetName));
+				}
+
+				public String getContentType() {
+					return contentType;
+				}
+			});
+		}
     }
 
     /**
      * @see org.springframework.ws.mime.Attachment#getInputStream()
      */
-    public InputStream getInputStream() throws IOException {
-        return new ByteArrayInputStream(content.getBytes(charsetName));
+	public InputStream getInputStream() throws IOException {
+		return getDataHandler().getInputStream();
     }
 
     /**
      * @see org.springframework.ws.mime.Attachment#getSize()
      */
-    public long getSize() {
-        try {
-            return content.getBytes(charsetName).length;
+	public long getSize() {
+		try {
+			if (content != null) {
+				return content.getBytes(charsetName).length;
+			} else if (binaryContent != null) {
+				return getSizeOfContent(binaryContent.getInputStream());
+			} else {
+				return 0;
+			}
         } catch (UnsupportedEncodingException e) {
             throw new CitrusRuntimeException(e);
-        }
-    }
+		} catch (IOException ioe) {
+			throw new CitrusRuntimeException(ioe);
+		}
+	}
 
     @Override
     public String toString() {
-        return String.format("%s [contentId: %s, contentType: %s, content: %s]", getClass().getSimpleName().toUpperCase(), contentId, contentType, content);
+		return String.format("%s [contentId: %s, contentType: %s, content: %s]", getClass().getSimpleName().toUpperCase(), contentId, contentType, getContent());
     }
 
     /**
      * Get the content body.
      * @return the content
      */
-    public String getContent() {
-        return content;
+	public String getContent() {
+		if (binaryContent != null) {
+			try {
+				return Base64.encodeBase64String(IOUtils.toByteArray(binaryContent.getInputStream()));
+			} catch (IOException e) {
+				throw new CitrusRuntimeException(e);
+			}
+		} else {
+			return content;
+		}
     }
 
     /**
@@ -155,8 +197,19 @@ public class SoapAttachment implements Attachment, Serializable {
      * @param content the content to set
      */
     public void setContent(String content) {
-        this.content = content;
-    }
+		this.content = content;
+		this.binaryContent = null;
+	}
+
+	/**
+	 * Set the content body as binary data.
+	 *
+	 * @param content the content to set
+	 */
+	public void setContent(DataHandler content) {
+		this.binaryContent = content;
+		this.content = null;
+	}
 
     /**
      * Get the charset name.
@@ -188,5 +241,26 @@ public class SoapAttachment implements Attachment, Serializable {
      */
     public void setContentId(String contentId) {
         this.contentId = contentId;
-    }
+	}
+
+	public void setMtomInline(Boolean inline) {
+		this.mtomInline = inline;
+	}
+
+	public Boolean getMtomInline() {
+		return this.mtomInline;
+	}
+
+	/**
+	 * Get size in bytes of the given input stream
+	 *
+	 * @param is Read all data from stream to calculate size of the stream
+	 */
+	private static long getSizeOfContent(InputStream is) throws IOException {
+		long size = 0;
+		while (is.read() != -1) {
+			size++;
+		}
+		return size;
+	}
 }

@@ -45,7 +45,8 @@ public final class SoapAttachmentParser {
         
         BeanDefinitionParserUtils.setPropertyValue(builder, attachmentElement.getAttribute("content-id"), "contentId");
         BeanDefinitionParserUtils.setPropertyValue(builder, attachmentElement.getAttribute("content-type"), "contentType");
-        BeanDefinitionParserUtils.setPropertyValue(builder, attachmentElement.getAttribute("charset-name"), "charsetName");
+		BeanDefinitionParserUtils.setPropertyValue(builder, attachmentElement.getAttribute("charset-name"), "charsetName");
+		BeanDefinitionParserUtils.setPropertyValue(builder, attachmentElement.getAttribute("mtom-inline"), "mtomInline");
         
         Element attachmentDataElement = DomUtils.getChildElementByTagName(attachmentElement, "data");
         if (attachmentDataElement != null) {

@@ -21,6 +21,15 @@
   	</plugins>
   </build>
   <dependencies>
+	  <dependency>
+			<groupId>commons-codec</groupId>
+			<artifactId>commons-codec</artifactId>
+	  </dependency>
+	  <dependency>
+			<groupId>commons-io</groupId>
+			<artifactId>commons-io</artifactId>
+	  </dependency>
+
   	<!-- Citrus Internal -->
     <dependency>
   		<groupId>com.consol.citrus</groupId>

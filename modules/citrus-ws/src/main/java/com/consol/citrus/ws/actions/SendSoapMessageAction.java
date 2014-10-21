@@ -21,11 +21,40 @@ import com.consol.citrus.context.TestContext;
 import com.consol.citrus.exceptions.CitrusRuntimeException;
 import com.consol.citrus.message.Message;
 import com.consol.citrus.util.FileUtils;
+import com.consol.citrus.util.XMLUtils;
 import com.consol.citrus.ws.SoapAttachment;
 import com.consol.citrus.ws.message.SoapMessage;
-import org.springframework.util.StringUtils;
-
+import com.consol.citrus.xml.XsdSchemaRepository;
+import com.consol.citrus.xml.schema.TargetNamespaceSchemaMappingStrategy;
+import com.consol.citrus.xml.schema.XsdSchemaMappingStrategy;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.StringReader;
+import javax.activation.DataHandler;
+import javax.activation.DataSource;
+import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.validation.SchemaFactory;
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpressionException;
+import javax.xml.xpath.XPathFactory;
+import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.codec.binary.Hex;
+import org.apache.commons.io.IOUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.io.Resource;
+import org.springframework.util.StringUtils;
+import org.springframework.xml.xsd.XsdSchema;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
 
 /**
  * Message sender implementation sending SOAP messages.
@@ -37,6 +66,8 @@ import java.io.IOException;
  */
 public class SendSoapMessageAction extends SendMessageAction {
 
+	private static Logger log = LoggerFactory.getLogger(SendSoapMessageAction.class);
+
     /** SOAP attachment data */
     private String attachmentData;
     
@@ -44,35 +75,91 @@ public class SendSoapMessageAction extends SendMessageAction {
     private String attachmentResourcePath;
     
     /** SOAP attachment */
-    private SoapAttachment attachment = new SoapAttachment();
+	private SoapAttachment attachment = new SoapAttachment();
+
+	/**
+	 * enable/disable mtom attachments
+	 */
+	private Boolean mtomEnabled = false;
 
     @Override
     protected SoapMessage createMessage(TestContext context, String messageType) {
         Message message = super.createMessage(context, getMessageType());
 
-        final SoapMessage soapMessage;
-        final String attachmentContent;
+		final String attachmentContent;
 
-        try {
+		try {
             if (StringUtils.hasText(attachmentData)) {
-                attachmentContent = context.replaceDynamicContentInString(attachmentData);
-            } else if (attachmentResourcePath != null) {
-                attachmentContent = context.replaceDynamicContentInString(FileUtils.readToString(FileUtils.getFileResource(attachmentResourcePath, context)));
+				attachmentContent = context.replaceDynamicContentInString(attachmentData);
+				attachment.setContent(attachmentContent);
+			} else if (attachmentResourcePath != null) {
+				if (attachment.getContentType().startsWith("text/")) {
+					attachmentContent = context.replaceDynamicContentInString(FileUtils.readToString(FileUtils.getFileResource(attachmentResourcePath, context)));
+					attachment.setContent(attachmentContent);
+				} else {
+					// binary content
+					final Resource attachmentResource = FileUtils.getFileResource(attachmentResourcePath, context);
+					attachment.setContent(new DataHandler(new DataSource() {
+						@Override
+						public InputStream getInputStream() throws IOException {
+							return attachmentResource.getInputStream();
+						}
+
+						@Override
+						public OutputStream getOutputStream() throws IOException {
+							throw new UnsupportedOperationException("Not supported yet.");
+						}
+
+						@Override
+						public String getContentType() {
+							return attachment.getContentType();
+						}
+
+						@Override
+						public String getName() {
+							return attachmentResource.getFilename();
+						}
+					}));
+				}
             } else {
-                attachmentContent = null;
-            }
+				attachmentContent = null;
+				attachment = null;
+			}
 
-            soapMessage = new SoapMessage(message);
-
-            if (attachmentContent != null) {
-                attachment.setContent(attachmentContent);
-                soapMessage.addAttachment(attachment);
-            }
+			if (attachment != null && mtomEnabled) {
+//				Document doc = XMLUtils.parseMessagePayload(message.getPayload().toString());
+//				message.setPayload(XMLUtils.serialize(doc));
+				String cid = "cid:" + attachment.getContentId();
+				String messagePayload = message.getPayload().toString();
+				if (attachment.getMtomInline()) {
+					if (messagePayload.contains(cid) && attachment.getInputStream().available() > 0) {
+						String xsiType = getAttachmentXsiType(context, message, cid);
+						if (xsiType.equals("base64binary")) {
+							messagePayload = messagePayload.replaceAll(cid, Base64.encodeBase64String(IOUtils.toByteArray(attachment.getInputStream())));
+						} else if (xsiType.equals("hexBinary")) {
+							messagePayload = messagePayload.replaceAll(cid, Hex.encodeHexString(IOUtils.toByteArray(attachment.getInputStream())));
+						} else {
+							throw new CitrusRuntimeException("Unsupported xsiType<" + xsiType + "> for attachment " + cid);
+						}
+						attachment = null;
+					}
+				} else {
+					messagePayload = messagePayload.replaceAll(cid, "<xop:Include xmlns:xop=\"http://www.w3.org/2004/08/xop/include\" href=\"" + cid + "\"/>");
+				}
+				message.setPayload(messagePayload);
+			}
 
         } catch (IOException e) {
             throw new CitrusRuntimeException(e);
         }
 
+		final SoapMessage soapMessage = new SoapMessage(message);
+		soapMessage.setMtomEnabled(mtomEnabled);
+		
+		if (attachment != null) {
+			soapMessage.addAttachment(attachment);
+		}
+		
         return soapMessage;
     }
 
@@ -138,5 +225,66 @@ public class SendSoapMessageAction extends SendMessageAction {
      */
     public SoapAttachment getAttachment() {
         return attachment;
-    }
+	}
+
+	/**
+	 * Enable or disable mtom attachments
+	 *
+	 * @param mtomEnabled
+	 */
+	public void setMtomEnabled(Boolean enable) {
+		this.mtomEnabled = enable;
+	}
+
+	public Boolean getMtomEnabled() {
+		return this.mtomEnabled;
+	}
+
+	/**
+	 * Set the mtom-inline, delegates to soap attachment.
+	 *
+	 * @param contentId the contentId to set
+	 */
+	public void setMtomInline(Boolean inline) {
+		attachment.setMtomInline(inline);
+	}
+
+	private String getAttachmentXsiType(TestContext context, Message message, String cid) {
+		String xsiType = "base64binary";
+		String xmlMessage = message.getPayload().toString();
+		XsdSchemaRepository schemaRepository = context.getApplicationContext().getBean("schemaRepository", XsdSchemaRepository.class);
+		if (schemaRepository != null) {
+			XsdSchemaMappingStrategy schemaMappingStrategy = new TargetNamespaceSchemaMappingStrategy();
+			XsdSchema schema = schemaMappingStrategy.getSchema(
+					schemaRepository.getSchemas(), XMLUtils.parseMessagePayload(xmlMessage));
+			if (schema != null) {
+				try {
+					DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+					dbf.setNamespaceAware(true);
+					SchemaFactory sf = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+
+					dbf.setSchema(sf.newSchema(schema.getSource()));
+					DocumentBuilder db = dbf.newDocumentBuilder();
+					Document doc = db.parse(new InputSource(new StringReader(xmlMessage)));
+					doc.getDocumentElement().normalize();
+
+					XPath xPath = XPathFactory.newInstance().newXPath();
+					Node node = (Node) xPath.compile("//[text()=" + cid + "]").evaluate(doc, XPathConstants.NODE);
+					if (node instanceof Element) {
+						xsiType = ((Element) node).getSchemaTypeInfo().getTypeName();
+					}
+				} catch (SAXException e) {
+					log.warn("message cannot be parsed with the schema: " + schema.toString(), e);
+				} catch (ParserConfigurationException e) {
+					log.warn(e.getLocalizedMessage(), e);
+				} catch (IOException e) {
+					log.warn(e.getLocalizedMessage(), e);
+				} catch (XPathExpressionException e) {
+					log.warn(e.getLocalizedMessage(), e);
+				}
+			}
+		}
+
+		return xsiType;
+	}
 }
