@@ -23,6 +23,7 @@ import com.consol.citrus.message.Message;
 import com.consol.citrus.util.FileUtils;
 import com.consol.citrus.util.XMLUtils;
 import com.consol.citrus.ws.SoapAttachment;
+import com.consol.citrus.ws.XsdSchemaResourceResolver;
 import com.consol.citrus.ws.message.SoapMessage;
 import com.consol.citrus.xml.XsdSchemaRepository;
 import com.consol.citrus.xml.schema.TargetNamespaceSchemaMappingStrategy;
@@ -55,6 +56,7 @@ import org.springframework.xml.xsd.XsdSchema;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
+import org.w3c.dom.ls.LSInput;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
@@ -135,7 +137,8 @@ public class SendSoapMessageAction extends SendMessageAction {
 				String messagePayload = message.getPayload().toString();
 				if (attachment.getMtomInline()) {
 					if (messagePayload.contains(cid) && attachment.getInputStream().available() > 0) {
-						String xsiType = getAttachmentXsiType(context, message, cid);
+						String xsiType = getAttachmentXsiType(context, messagePayload, cid);
+						
 						if (xsiType.equals("base64binary")) {
 							messagePayload = messagePayload.replaceAll(cid, Base64.encodeBase64String(IOUtils.toByteArray(attachment.getInputStream())));
 						} else if (xsiType.equals("hexBinary")) {
@@ -251,9 +254,8 @@ public class SendSoapMessageAction extends SendMessageAction {
 		attachment.setMtomInline(inline);
 	}
 
-	private String getAttachmentXsiType(TestContext context, Message message, String cid) {
+	private String getAttachmentXsiType(TestContext context, String xmlMessage, String cid) {
 		String xsiType = "base64binary";
-		String xmlMessage = message.getPayload().toString();
 		XsdSchemaRepository schemaRepository = context.getApplicationContext().getBean("schemaRepository", XsdSchemaRepository.class);
 		if (schemaRepository != null) {
 			XsdSchemaMappingStrategy schemaMappingStrategy = new TargetNamespaceSchemaMappingStrategy();
@@ -265,19 +267,20 @@ public class SendSoapMessageAction extends SendMessageAction {
 				try {
 					DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
 					dbf.setNamespaceAware(true);
-					SchemaFactory sf = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+					dbf.setValidating(false);
 
-					ArrayList<Source> schemaList = new ArrayList(schemaRepository.getSchemas().size());
-					for (XsdSchema xsd : schemaRepository.getSchemas()) {
-						schemaList.add(xsd.getSource());
-					}
-					dbf.setSchema(sf.newSchema(schemaList.toArray(new Source[schemaList.size()])));
+					SchemaFactory sf = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+					sf.setResourceResolver(new XsdSchemaResourceResolver(schemaRepository.getSchemas(), schemaRepository.getLocations()));
+					dbf.setSchema(sf.newSchema(schema.getSource()));
+
+
 					DocumentBuilder db = dbf.newDocumentBuilder();
 					Document doc = db.parse(new InputSource(new StringReader(xmlMessage)));
 					doc.getDocumentElement().normalize();
 
 					XPath xPath = XPathFactory.newInstance().newXPath();
-					Node node = (Node) xPath.compile("//[text()=" + cid + "]").evaluate(doc, XPathConstants.NODE);
+					String expression = "//*[contains(normalize-space(text()), '" + cid + "')]";
+					Node node = (Node) xPath.compile(expression).evaluate(doc, XPathConstants.NODE);
 					if (node instanceof Element) {
 						xsiType = ((Element) node).getSchemaTypeInfo().getTypeName();
 					} else {
