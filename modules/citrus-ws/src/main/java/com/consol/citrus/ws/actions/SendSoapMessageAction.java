@@ -31,12 +31,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.StringReader;
+import java.util.ArrayList;
 import javax.activation.DataHandler;
 import javax.activation.DataSource;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.Source;
 import javax.xml.validation.SchemaFactory;
 import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
@@ -257,13 +259,19 @@ public class SendSoapMessageAction extends SendMessageAction {
 			XsdSchemaMappingStrategy schemaMappingStrategy = new TargetNamespaceSchemaMappingStrategy();
 			XsdSchema schema = schemaMappingStrategy.getSchema(
 					schemaRepository.getSchemas(), XMLUtils.parseMessagePayload(xmlMessage));
-			if (schema != null) {
+			if (schema == null) {
+				log.error("No matching schema found to parse the attachment xml element for cid: " + cid);
+			} else {
 				try {
 					DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
 					dbf.setNamespaceAware(true);
 					SchemaFactory sf = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
 
-					dbf.setSchema(sf.newSchema(schema.getSource()));
+					ArrayList<Source> schemaList = new ArrayList(schemaRepository.getSchemas().size());
+					for (XsdSchema xsd : schemaRepository.getSchemas()) {
+						schemaList.add(xsd.getSource());
+					}
+					dbf.setSchema(sf.newSchema(schemaList.toArray(new Source[schemaList.size()])));
 					DocumentBuilder db = dbf.newDocumentBuilder();
 					Document doc = db.parse(new InputSource(new StringReader(xmlMessage)));
 					doc.getDocumentElement().normalize();
@@ -272,14 +280,10 @@ public class SendSoapMessageAction extends SendMessageAction {
 					Node node = (Node) xPath.compile("//[text()=" + cid + "]").evaluate(doc, XPathConstants.NODE);
 					if (node instanceof Element) {
 						xsiType = ((Element) node).getSchemaTypeInfo().getTypeName();
+					} else {
+						log.warn("parent element of cid: " + cid + " not found in xml payload.");
 					}
-				} catch (SAXException e) {
-					log.warn("message cannot be parsed with the schema: " + schema.toString(), e);
-				} catch (ParserConfigurationException e) {
-					log.warn(e.getLocalizedMessage(), e);
-				} catch (IOException e) {
-					log.warn(e.getLocalizedMessage(), e);
-				} catch (XPathExpressionException e) {
+				} catch (SAXException | ParserConfigurationException | IOException | XPathExpressionException e) {
 					log.warn(e.getLocalizedMessage(), e);
 				}
 			}
